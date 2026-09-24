@@ -77,6 +77,17 @@ bool RGLServerPluginInstance::LoadConfiguration(const std::shared_ptr<const sdf:
         return false;
     }
 
+    // Split a chronological preset into small scans, one per simulation update.
+    if (sdf->HasElement("pattern_subscan_size")) {
+        const auto subscanSize = sdf->Get<int>("pattern_subscan_size");
+        if (subscanSize <= 0) {
+            gzerr << "pattern_subscan_size must be positive. Disabling plugin.\n";
+            return false;
+        }
+        lidarPatternSampleSize = static_cast<std::size_t>(subscanSize);
+        streamPattern = true;
+    }
+
     if ((lidarPattern.size() % lidarPatternSampleSize) != 0) {
         gzerr << "Total pattern size (" << lidarPattern.size() << ") must be a multiple of the sample size (" << lidarPatternSampleSize << "). Disabling plugin.\n";
         return false;
@@ -123,6 +134,12 @@ void RGLServerPluginInstance::CreateLidar(gz::sim::Entity entity,
           gzerr << "Failed to create RGL nodes when initializing lidar. Disabling plugin.\n";
           return;
       }
+      if (streamPattern) {
+          break;
+      }
+    }
+    if (streamPattern) {
+        alternatingPatternIndex = lidarPattern.size() / lidarPatternSampleSize - 1;
     }
 
     if (!CheckRGL(rgl_node_rays_set_range(&rglNodeSetRange, &lidarMinMaxRange, 1)) ||
@@ -183,6 +200,15 @@ void RGLServerPluginInstance::UpdateLidarPose(const gz::sim::EntityComponentMana
 
 void RGLServerPluginInstance::UpdateAlternatingLidarPattern()
 {
+    if (streamPattern) {
+        alternatingPatternIndex = (alternatingPatternIndex + 1) %
+            (lidarPattern.size() / lidarPatternSampleSize);
+        CheckRGL(rgl_node_rays_from_mat3x4f(
+            &rglNodesUseRays.front(),
+            lidarPattern.data() + alternatingPatternIndex * lidarPatternSampleSize,
+            static_cast<int32_t>(lidarPatternSampleSize)));
+        return;
+    }
     // remove old child
     if(!CheckRGL(rgl_graph_node_remove_child(rglNodesUseRays[alternatingPatternIndex], rglNodeSetRange)))
     {
@@ -228,7 +254,7 @@ bool RGLServerPluginInstance::ShouldRayTrace(std::chrono::steady_clock::duration
 
 void RGLServerPluginInstance::RayTrace(std::chrono::steady_clock::duration simTime)
 {
-    if (rglNodesUseRays.size() > 1) {
+    if (streamPattern || rglNodesUseRays.size() > 1) {
         UpdateAlternatingLidarPattern();
     }
 

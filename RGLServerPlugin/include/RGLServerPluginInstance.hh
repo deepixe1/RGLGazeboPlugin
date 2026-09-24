@@ -88,6 +88,7 @@ private:
     int scanHSamples;
     std::vector<rgl_mat3x4f> lidarPattern;
     std::size_t alternatingPatternIndex = 0;
+    bool streamPattern = false;
 
     struct ResultPointCloud
     {
